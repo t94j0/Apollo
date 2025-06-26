@@ -10,6 +10,7 @@ using ApolloInterop.Classes;
 using ApolloInterop.Interfaces;
 using ApolloInterop.Structs.ApolloStructs;
 using ApolloInterop.Structs.MythicStructs;
+using ApolloInterop.Utils;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 
@@ -52,9 +53,12 @@ namespace Tasks
                     parameters.Credential.CredentialMaterial,
                     parameters.Credential.Realm,
                     parameters.NetOnly);
+                DebugHelp.DebugWriteLine($"[make_token] Calling SetIdentity for {info.Domain}\\{info.Username}");
                 if (_agent.GetIdentityManager().SetIdentity(info))
                 {
+                    DebugHelp.DebugWriteLine($"[make_token] SetIdentity returned true");
                     var cur = _agent.GetIdentityManager().GetCurrentImpersonationIdentity();
+                    DebugHelp.DebugWriteLine($"[make_token] GetCurrentImpersonationIdentity returned: {cur.Name}");
                     var stringOutput = $"Old Claims (Authenticated: {old.IsAuthenticated}, AuthType: ";
                     try
                     {

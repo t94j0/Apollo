@@ -296,10 +296,29 @@ public class IdentityManager : IIdentityManager
         int dwError = 0;
         IntPtr hToken = IntPtr.Zero;
 
+        DebugHelp.DebugWriteLine($"[SetIdentity] Starting impersonation for {logonInfo.Domain}\\{logonInfo.Username}, NetOnly: {logonInfo.NetOnly}");
+        
+        // Log current identity before changes
+        try 
+        {
+            var beforeIdentity = WindowsIdentity.GetCurrent();
+            DebugHelp.DebugWriteLine($"[SetIdentity] Current identity before: {beforeIdentity.Name}");
+            DebugHelp.DebugWriteLine($"[SetIdentity] _executingThread handle: 0x{_executingThread.ToInt64():X}");
+        }
+        catch (Exception ex)
+        {
+            DebugHelp.DebugWriteLine($"[SetIdentity] Error getting current identity: {ex.Message}");
+        }
+
         Revert();
         // Blank out the old struct
         _userCredential = logonInfo;
 
+        DebugHelp.DebugWriteLine($"[SetIdentity] Calling LogonUserA with:");
+        DebugHelp.DebugWriteLine($"[SetIdentity]   Username: {_userCredential.Username}");
+        DebugHelp.DebugWriteLine($"[SetIdentity]   Domain: {_userCredential.Domain}");
+        DebugHelp.DebugWriteLine($"[SetIdentity]   LogonType: {(_userCredential.NetOnly ? "LOGON32_LOGON_NEW_CREDENTIALS" : "LOGON32_LOGON_INTERACTIVE")}");
+        
         bRet = _pLogonUserA(
             _userCredential.Username,
             _userCredential.Domain,
@@ -308,39 +327,78 @@ public class IdentityManager : IIdentityManager
             LogonProvider.LOGON32_PROVIDER_WINNT50,
             out hToken);
 
-        if (bRet)
+        if (!bRet)
         {
-            _currentPrimaryIdentity = new WindowsIdentity(hToken);
-            _CloseHandle(hToken);
-            bRet = _DuplicateTokenEx(
-                _currentPrimaryIdentity.Token,
-                TokenAccessLevels.MaximumAllowed,
-                IntPtr.Zero,
-                TokenImpersonationLevel.Impersonation,
-                TokenType.TokenImpersonation,
-                out IntPtr dupToken);
-            if (bRet)
-            {
-                // Apply the impersonation token to the current thread BEFORE creating WindowsIdentity
-                bRet = _SetThreadToken(ref _executingThread, dupToken);
-                if (!bRet)
-                {
-                    dwError = Marshal.GetLastWin32Error();
-                    _CloseHandle(dupToken);
-                    Revert();
-                    return false;
-                }
-                _CloseHandle(dupToken);
-                // Get the current thread's identity after impersonation
-                _currentImpersonationIdentity = WindowsIdentity.GetCurrent();
-                _isImpersonating = true;
-            }
-            else
-            {
-                Revert();
-            }
+            dwError = Marshal.GetLastWin32Error();
+            DebugHelp.DebugWriteLine($"[SetIdentity] LogonUserA failed with error: {dwError}");
+            return false;
         }
-        return bRet;
+
+        DebugHelp.DebugWriteLine($"[SetIdentity] LogonUserA succeeded, token handle: 0x{hToken.ToInt64():X}");
+        
+        _currentPrimaryIdentity = new WindowsIdentity(hToken);
+        DebugHelp.DebugWriteLine($"[SetIdentity] Primary identity created: {_currentPrimaryIdentity.Name}");
+        DebugHelp.DebugWriteLine($"[SetIdentity] Primary identity token: 0x{_currentPrimaryIdentity.Token.ToInt64():X}");
+        
+        _CloseHandle(hToken);
+        DebugHelp.DebugWriteLine($"[SetIdentity] Closed original token handle");
+        
+        DebugHelp.DebugWriteLine($"[SetIdentity] Calling DuplicateTokenEx with:");
+        DebugHelp.DebugWriteLine($"[SetIdentity]   Source token: 0x{_currentPrimaryIdentity.Token.ToInt64():X}");
+        DebugHelp.DebugWriteLine($"[SetIdentity]   Desired access: MaximumAllowed");
+        DebugHelp.DebugWriteLine($"[SetIdentity]   Impersonation level: Impersonation");
+        
+        bRet = _DuplicateTokenEx(
+            _currentPrimaryIdentity.Token,
+            TokenAccessLevels.MaximumAllowed,
+            IntPtr.Zero,
+            TokenImpersonationLevel.Impersonation,
+            TokenType.TokenImpersonation,
+            out IntPtr dupToken);
+            
+        if (!bRet)
+        {
+            dwError = Marshal.GetLastWin32Error();
+            DebugHelp.DebugWriteLine($"[SetIdentity] DuplicateTokenEx failed with error: {dwError}");
+            Revert();
+            return false;
+        }
+        
+        DebugHelp.DebugWriteLine($"[SetIdentity] DuplicateTokenEx succeeded, dupToken: 0x{dupToken.ToInt64():X}");
+        
+        // Apply the impersonation token to the current thread BEFORE creating WindowsIdentity
+        DebugHelp.DebugWriteLine($"[SetIdentity] Calling SetThreadToken with thread: 0x{_executingThread.ToInt64():X}, token: 0x{dupToken.ToInt64():X}");
+        bRet = _SetThreadToken(ref _executingThread, dupToken);
+        
+        if (!bRet)
+        {
+            dwError = Marshal.GetLastWin32Error();
+            DebugHelp.DebugWriteLine($"[SetIdentity] SetThreadToken failed with error: {dwError}");
+            _CloseHandle(dupToken);
+            Revert();
+            return false;
+        }
+        
+        DebugHelp.DebugWriteLine($"[SetIdentity] SetThreadToken succeeded");
+        _CloseHandle(dupToken);
+        DebugHelp.DebugWriteLine($"[SetIdentity] Closed duplicated token handle");
+        
+        // Get the current thread's identity after impersonation
+        try
+        {
+            _currentImpersonationIdentity = WindowsIdentity.GetCurrent();
+            DebugHelp.DebugWriteLine($"[SetIdentity] Current identity after impersonation: {_currentImpersonationIdentity.Name}");
+            DebugHelp.DebugWriteLine($"[SetIdentity] Is authenticated: {_currentImpersonationIdentity.IsAuthenticated}");
+            DebugHelp.DebugWriteLine($"[SetIdentity] Authentication type: {_currentImpersonationIdentity.AuthenticationType}");
+        }
+        catch (Exception ex)
+        {
+            DebugHelp.DebugWriteLine($"[SetIdentity] Error getting identity after impersonation: {ex.Message}");
+        }
+        
+        _isImpersonating = true;
+        DebugHelp.DebugWriteLine($"[SetIdentity] Impersonation complete, returning true");
+        return true;
     }
 
     public void SetPrimaryIdentity(WindowsIdentity ident)
