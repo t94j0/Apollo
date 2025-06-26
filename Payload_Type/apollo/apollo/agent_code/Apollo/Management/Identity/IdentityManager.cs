@@ -321,9 +321,8 @@ public class IdentityManager : IIdentityManager
                 out IntPtr dupToken);
             if (bRet)
             {
-                _currentImpersonationIdentity = new WindowsIdentity(dupToken);
-                // Apply the impersonation token to the current thread
-                bRet = _SetThreadToken(ref _executingThread, _currentImpersonationIdentity.Token);
+                // Apply the impersonation token to the current thread BEFORE creating WindowsIdentity
+                bRet = _SetThreadToken(ref _executingThread, dupToken);
                 if (!bRet)
                 {
                     dwError = Marshal.GetLastWin32Error();
@@ -331,6 +330,8 @@ public class IdentityManager : IIdentityManager
                     Revert();
                     return false;
                 }
+                // Now create the WindowsIdentity from the duplicated token
+                _currentImpersonationIdentity = new WindowsIdentity(dupToken);
                 _CloseHandle(dupToken);
                 _isImpersonating = true;
             }
