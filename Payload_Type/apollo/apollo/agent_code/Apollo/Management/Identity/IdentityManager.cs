@@ -330,9 +330,9 @@ public class IdentityManager : IIdentityManager
                     Revert();
                     return false;
                 }
-                // Now create the WindowsIdentity from the duplicated token
-                _currentImpersonationIdentity = new WindowsIdentity(dupToken);
                 _CloseHandle(dupToken);
+                // Get the current thread's identity after impersonation
+                _currentImpersonationIdentity = WindowsIdentity.GetCurrent();
                 _isImpersonating = true;
             }
             else

@@ -77,7 +77,7 @@ namespace Tasks
                     {
                         stringOutput += $"AccessDenied):\n";
                     }
-                    foreach (var item in old.Claims)
+                    foreach (var item in cur.Claims)
                     {
                         stringOutput += item.ToString() + "\n";
                     }
