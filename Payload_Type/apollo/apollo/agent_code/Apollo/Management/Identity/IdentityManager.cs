@@ -322,6 +322,15 @@ public class IdentityManager : IIdentityManager
             if (bRet)
             {
                 _currentImpersonationIdentity = new WindowsIdentity(dupToken);
+                // Apply the impersonation token to the current thread
+                bRet = _SetThreadToken(ref _executingThread, _currentImpersonationIdentity.Token);
+                if (!bRet)
+                {
+                    dwError = Marshal.GetLastWin32Error();
+                    _CloseHandle(dupToken);
+                    Revert();
+                    return false;
+                }
                 _CloseHandle(dupToken);
                 _isImpersonating = true;
             }
