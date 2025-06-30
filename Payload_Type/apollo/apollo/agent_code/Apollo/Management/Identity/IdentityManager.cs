@@ -366,7 +366,24 @@ public class IdentityManager : IIdentityManager
         
         DebugHelp.DebugWriteLine($"[SetIdentity] DuplicateTokenEx succeeded, dupToken: 0x{dupToken.ToInt64():X}");
         
-        // Apply the impersonation token to the current thread BEFORE creating WindowsIdentity
+        // Create WindowsIdentity from the duplicated token BEFORE applying it or closing it
+        // This ensures we have a valid token handle for later impersonation
+        try
+        {
+            _currentImpersonationIdentity = new WindowsIdentity(dupToken);
+            DebugHelp.DebugWriteLine($"[SetIdentity] Created WindowsIdentity from dupToken: {_currentImpersonationIdentity.Name}");
+            DebugHelp.DebugWriteLine($"[SetIdentity] WindowsIdentity token handle: 0x{_currentImpersonationIdentity.Token.ToInt64():X}");
+        }
+        catch (Exception ex)
+        {
+            dwError = Marshal.GetLastWin32Error();
+            DebugHelp.DebugWriteLine($"[SetIdentity] Failed to create WindowsIdentity from dupToken: {ex.Message}");
+            _CloseHandle(dupToken);
+            Revert();
+            return false;
+        }
+        
+        // Apply the impersonation token to the current thread
         DebugHelp.DebugWriteLine($"[SetIdentity] Calling SetThreadToken with thread: 0x{_executingThread.ToInt64():X}, token: 0x{dupToken.ToInt64():X}");
         bRet = _SetThreadToken(ref _executingThread, dupToken);
         
@@ -374,26 +391,27 @@ public class IdentityManager : IIdentityManager
         {
             dwError = Marshal.GetLastWin32Error();
             DebugHelp.DebugWriteLine($"[SetIdentity] SetThreadToken failed with error: {dwError}");
+            _currentImpersonationIdentity.Dispose();
+            _currentImpersonationIdentity = _originalIdentity;
             _CloseHandle(dupToken);
             Revert();
             return false;
         }
         
         DebugHelp.DebugWriteLine($"[SetIdentity] SetThreadToken succeeded");
-        _CloseHandle(dupToken);
-        DebugHelp.DebugWriteLine($"[SetIdentity] Closed duplicated token handle");
+        // Don't close dupToken here - WindowsIdentity now owns it
+        DebugHelp.DebugWriteLine($"[SetIdentity] Token handle is now managed by WindowsIdentity");
         
-        // Get the current thread's identity after impersonation
+        // Log the impersonation details
         try
         {
-            _currentImpersonationIdentity = WindowsIdentity.GetCurrent();
             DebugHelp.DebugWriteLine($"[SetIdentity] Current identity after impersonation: {_currentImpersonationIdentity.Name}");
             DebugHelp.DebugWriteLine($"[SetIdentity] Is authenticated: {_currentImpersonationIdentity.IsAuthenticated}");
             DebugHelp.DebugWriteLine($"[SetIdentity] Authentication type: {_currentImpersonationIdentity.AuthenticationType}");
         }
         catch (Exception ex)
         {
-            DebugHelp.DebugWriteLine($"[SetIdentity] Error getting identity after impersonation: {ex.Message}");
+            DebugHelp.DebugWriteLine($"[SetIdentity] Error logging identity details: {ex.Message}");
         }
         
         _isImpersonating = true;
@@ -429,6 +447,17 @@ public class IdentityManager : IIdentityManager
     {
         _SetThreadToken(ref _executingThread, _originalImpersonationToken);
         _userCredential = new ApolloLogonInformation();
+        
+        // Dispose of the impersonation identity if it's not the original
+        if (_currentImpersonationIdentity != _originalIdentity && _currentImpersonationIdentity != null)
+        {
+            try
+            {
+                _currentImpersonationIdentity.Dispose();
+            }
+            catch { }
+        }
+        
         _currentImpersonationIdentity = _originalIdentity;
         _currentPrimaryIdentity = _originalIdentity;
         _isImpersonating = false;
