@@ -20,6 +20,7 @@ using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
 using System.Runtime.Serialization;
 using System.Security.Permissions;
+using System.Security.Principal;
 using ST = System.Threading.Tasks;
 using System.ServiceProcess;
 
@@ -1042,7 +1043,26 @@ namespace Tasks
             ValidateParameters(parameters);
             List<ServiceResult> results = new List<ServiceResult>();
             
-            if (parameters.Query)
+            WindowsImpersonationContext impersonationContext = null;
+            try
+            {
+                // Check if we need to apply impersonation to this thread
+                if (!_agent.GetIdentityManager().IsOriginalIdentity())
+                {
+                    try
+                    {
+                        // Apply the current impersonation token to this thread
+                        impersonationContext = _agent.GetIdentityManager().GetCurrentImpersonationIdentity().Impersonate();
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log but continue - some operations might still work
+                        resp = CreateTaskResponse($"Warning: Failed to apply impersonation context: {ex.Message}. Continuing with current context.", false);
+                        _agent.GetTaskManager().AddTaskResponseToQueue(resp);
+                    }
+                }
+                
+                if (parameters.Query)
             {
                 try {
                     results = QueryServies(parameters, "query");
@@ -1178,6 +1198,19 @@ namespace Tasks
             else
             {
                 resp = CreateTaskResponse($"No valid action given.", true, "error");
+            }
+            }
+            finally
+            {
+                // Dispose of the impersonation context if we created one
+                if (impersonationContext != null)
+                {
+                    try
+                    {
+                        impersonationContext.Dispose();
+                    }
+                    catch { }
+                }
             }
 
             _agent.GetTaskManager().AddTaskResponseToQueue(resp);
