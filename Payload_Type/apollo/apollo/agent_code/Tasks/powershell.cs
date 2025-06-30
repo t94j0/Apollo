@@ -22,6 +22,7 @@ using System.Management.Automation.Runspaces;
 using System.Collections.Concurrent;
 using System.Runtime.Serialization;
 using ApolloInterop.Classes.Collections;
+using System.Security.Principal;
 
 namespace Tasks
 {
@@ -370,8 +371,24 @@ namespace Tasks
 
             TextWriter oldStdout = Console.Out;
             TextWriter oldStderr = Console.Error;
+            WindowsImpersonationContext impersonationContext = null;
             try
             {
+                // Check if we need to apply impersonation to this thread
+                if (!_agent.GetIdentityManager().IsOriginalIdentity())
+                {
+                    try
+                    {
+                        // Apply the current impersonation token to this thread
+                        impersonationContext = _agent.GetIdentityManager().GetCurrentImpersonationIdentity().Impersonate();
+                    }
+                    catch (Exception ex)
+                    {
+                        // Log but continue - some operations might still work
+                        Console.WriteLine($"Warning: Failed to apply impersonation context: {ex.Message}");
+                    }
+                }
+
                 EventableStringWriter stdoutSw = new EventableStringWriter();
 
                 stdoutSw.BufferWritten += OnBufferWrite;
@@ -414,6 +431,16 @@ namespace Tasks
             }
             finally
             {
+                // Dispose of the impersonation context if we created one
+                if (impersonationContext != null)
+                {
+                    try
+                    {
+                        impersonationContext.Dispose();
+                    }
+                    catch { }
+                }
+                
                 Console.SetOut(oldStdout);
                 Console.SetError(oldStderr);
                 _agent.ReleaseOutputLock();
